@@ -1,0 +1,125 @@
+name: CI/CD for FINAL
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  AWS_REGION: ap-northeast-2                   # set this to your preferred AWS region, e.g. us-west-1
+  ECR_REPOSITORY: teamf-ecr           # set this to your Amazon ECR repository name
+  ECS_SERVICE: teamf-svc          # set this to your Amazon ECS service name
+  ECS_CLUSTER: teamf-cluster                # set this to your Amazon ECS cluster name
+  ECS_TASK_DEFINITION: ./Final/BE/task-definition.json # set this to the path to your Amazon ECS task definition
+                                               # file, e.g. .aws/task-definition.json
+  CONTAINER_NAME: teamf-container           # set this to the name of the container in the
+                                               # containerDefinitions section of your task definition
+
+jobs:
+  terraform:
+    name: 'Terraform'
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./Final/terraform # 기본 워킹 디렉토리 설정
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+    # Checkout the repository to the GitHub Actions runner
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    # AWS 리소스를 이용하기 위해서 추가
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    # Initialize a new or existing Terraform working directory by creating initial files, loading any remote state, downloading modules, etc.
+    - name: Terraform Init
+      run: terraform init
+
+    # Generates an execution plan for Terraform
+    - name: Terraform Plan
+      run: terraform plan -input=false
+
+      # On push to "main", build or change infrastructure according to Terraform configuration files
+      # Note: It is recommended to set up a required "strict" status check in your repository for "Terraform Cloud". See the documentation on "strict" required status checks for more information: https://help.github.com/en/github/administering-a-repository/types-of-required-status-checks
+    - name: Terraform Apply'
+      if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+      run: terraform apply -auto-approve -input=false
+  
+  front-build:
+
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./Final/FE # 기본 워킹 디렉토리 설정
+
+    steps:
+    - name: checkout Github Action
+      uses: actions/checkout@v3 # github actions 가상 환경에 해당 레포 소스 가져오기
+      
+    - name: install npm dependencies
+      run: npm install
+    - run: REACT_APP_SERVER_URL=https://kimdoliving.com  npm run build
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-northeast-2
+
+    - name: Copy files to the production website with the AWS CLI
+      env:
+          BUCKET_NAME: ${{ secrets.AWS_S3_BUCKET_NAME}}
+      run: |
+        aws s3 sync build s3://$BUCKET_NAME 
+
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./Final/BE
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+          container-name: ${{ env.CONTAINER_NAME }} #
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
