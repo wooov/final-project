@@ -166,30 +166,6 @@ Other Service
 
 <br>
 
-***
-<h3>📝 회고</h3>
-
-<details>
-    <summary><strong> 김도형 </strong></summary>
-</details>
-
-<details>
-    <summary><strong> 박성욱 </strong></summary>
-</details>
-
-<details>
-    <summary><strong> 이혜정 </strong></summary>
-</details>
-
-<details>
-    <summary><strong> 진유록 </strong></summary>
-</details>
-
-<details>
-    <summary><strong> 최우람 </strong></summary>
-</details>
-
-
 <br>
 
 ### 디렉토리 구조
